@@ -1,0 +1,22 @@
+id,name,age,email,score,city
+1,Alice Johnson,29,alice@example.com,87.5,New York
+2,Bob Smith,,bob@example.com,92.0,Los Angeles
+3,Carol White,34,carol@example.com,,Chicago
+4,Dave Brown,28,dave@example.com,78.3,Houston
+5,,41,eve@example.com,65.1,Phoenix
+6,Frank Davis,35,frank@example.com,88.9,Philadelphia
+7,Grace Lee,27,,91.2,San Antonio
+8,Hank Wilson,33,hank@example.com,70.0,
+9,Ivy Martinez,30,ivy@example.com,84.5,Dallas
+10,Jack Taylor,38,jack@example.com,,San Jose
+1,Alice Johnson,29,alice@example.com,87.5,New York
+11,Liam Anderson,,liam@example.com,73.8,Austin
+12,Mia Thomas,26,mia@example.com,95.1,Jacksonville
+13,,45,noah@example.com,61.4,Fort Worth
+14,Olivia Jackson,31,olivia@example.com,82.7,Columbus
+15,Peter Harris,36,peter@example.com,78.9,Charlotte
+16,Quinn Martin,29,,69.3,Indianapolis
+17,Rachel Garcia,32,rachel@example.com,,San Francisco
+18,Sam Rodriguez,27,sam@example.com,90.0,Seattle
+19,Tina Lewis,40,tina@example.com,76.2,Denver
+20,Uma Walker,33,uma@example.com,83.8,Nashville

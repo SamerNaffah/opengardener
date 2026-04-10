@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package soil;
+
+// The Soil service is the shared pheromone space.
+// Agents query it before tasks and leave trails after.
+service Soil {
+  // Query for similar past tasks and their outcomes
+  rpc QuerySimilar   (QueryRequest)   returns (QueryResponse);
+  // Leave a success pheromone trail after completing a task
+  rpc LeaveTrail     (Trail)          returns (Empty);
+  // Mark a failed approach to warn future agents
+  rpc MarkFailure    (FailureMarker)  returns (Empty);
+  // Get reputation data for a given agent
+  rpc GetReputation  (AgentRequest)   returns (Reputation);
+}
+
+message QueryRequest {
+  repeated float embedding  = 1;  // 384-dim sentence-transformer vector
+  int32          limit      = 2;  // max results to return
+  float          threshold  = 3;  // cosine similarity threshold (0.0-1.0)
+  string         domain     = 4;  // optional: filter by task domain
+}
+
+message QueryResponse {
+  repeated TrailResult results = 1;
+}
+
+message TrailResult {
+  string          trail_id     = 1;
+  string          outcome      = 2;  // "success" | "failure"
+  string          approach     = 3;  // JSON-encoded approach dict
+  float           success_rate = 4;  // historical success rate for this approach
+  map<string,float> resources  = 5;  // cpu_ms, memory_mb
+  string          agent_id     = 6;
+  string          task_domain  = 7;
+  int32           hits         = 8;  // how many times this trail was followed
+}
+
+message Trail {
+  repeated float    embedding   = 1;
+  string            outcome     = 2;  // "success" | "failure"
+  string            approach    = 3;  // JSON-encoded approach dict
+  map<string,float> resources   = 4;
+  string            agent_id    = 5;
+  string            timestamp   = 6;  // ISO 8601
+  string            task_domain = 7;  // "data_cleaning" | "code_generation" | "api_testing"
+  string            task_summary = 8; // human-readable summary for debugging
+}
+
+message FailureMarker {
+  repeated float embedding        = 1;
+  string         failed_approach  = 2;  // JSON-encoded
+  string         error            = 3;  // error message
+  string         agent_id         = 4;
+  string         severity         = 5;  // "low" | "medium" | "high"
+  string         task_domain      = 6;
+  bool           avoid_in_future  = 7;
+}
+
+message AgentRequest {
+  string agent_id = 1;
+}
+
+message Reputation {
+  string agent_id        = 1;
+  float  success_rate    = 2;
+  int32  tasks_completed = 3;
+  string specialization  = 4;  // emergent domain this agent excels in
+}
+
+message Empty {}

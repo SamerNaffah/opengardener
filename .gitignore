@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Environment
+.env
+*.env.local
+
+# Rust
+gardener/target/
+gardener/Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Generated proto files
+agents/base/generated/
+gardener/src/generated/
+
+# Docker volumes (local dev)
+.docker-volumes/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

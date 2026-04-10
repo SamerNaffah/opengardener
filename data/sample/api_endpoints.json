@@ -1,0 +1,59 @@
+[
+  {
+    "name": "HTTPBin GET",
+    "url": "https://httpbin.org/get",
+    "method": "GET",
+    "expected_status": 200,
+    "description": "Basic GET endpoint"
+  },
+  {
+    "name": "HTTPBin POST",
+    "url": "https://httpbin.org/post",
+    "method": "POST",
+    "expected_status": 200,
+    "payload": {"test": "opengardener"},
+    "description": "Basic POST endpoint"
+  },
+  {
+    "name": "JSONPlaceholder Posts",
+    "url": "https://jsonplaceholder.typicode.com/posts",
+    "method": "GET",
+    "expected_status": 200,
+    "description": "Public REST API - list posts"
+  },
+  {
+    "name": "JSONPlaceholder Single Post",
+    "url": "https://jsonplaceholder.typicode.com/posts/1",
+    "method": "GET",
+    "expected_status": 200,
+    "description": "Public REST API - single post"
+  },
+  {
+    "name": "JSONPlaceholder 404",
+    "url": "https://jsonplaceholder.typicode.com/posts/9999",
+    "method": "GET",
+    "expected_status": 404,
+    "description": "Endpoint expected to return 404"
+  },
+  {
+    "name": "HTTPBin Status 200",
+    "url": "https://httpbin.org/status/200",
+    "method": "GET",
+    "expected_status": 200,
+    "description": "Returns specific status code"
+  },
+  {
+    "name": "HTTPBin Status 500",
+    "url": "https://httpbin.org/status/500",
+    "method": "GET",
+    "expected_status": 500,
+    "description": "Server error simulation — agents should mark as failure if unexpected"
+  },
+  {
+    "name": "HTTPBin Delay",
+    "url": "https://httpbin.org/delay/2",
+    "method": "GET",
+    "expected_status": 200,
+    "description": "Slow endpoint — tests timeout handling"
+  }
+]

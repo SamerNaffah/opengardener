@@ -1,0 +1,230 @@
+name: opengardener
+
+networks:
+  gardener-net:
+    driver: bridge
+
+volumes:
+  chroma-data:
+  ollama-data:
+
+services:
+
+  # ─── ChromaDB: Soil vector store ─────────────────────────────────────────
+  chromadb:
+    image: chromadb/chroma:latest
+    networks: [gardener-net]
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─── Ollama: Local LLM (free, air-gapped) ────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    networks: [gardener-net]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ─── Gardener: Rust orchestrator + Soil gRPC server ──────────────────────
+  gardener:
+    build:
+      context: .
+      dockerfile: docker/gardener/Dockerfile
+    networks: [gardener-net]
+    ports:
+      - "50051:50051"   # Soil gRPC
+      - "50052:50052"   # Gardener gRPC
+      - "8080:8080"     # Metrics HTTP
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    environment:
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+      SOIL_GRPC_PORT: "50051"
+      GARDENER_GRPC_PORT: "50052"
+      METRICS_PORT: "8080"
+      OBSERVER_INTERVAL_SECS: "60"
+      RUST_LOG: "info"
+    restart: unless-stopped
+
+  # ─── Data Cleaning Agents (3 replicas) ───────────────────────────────────
+  agent-data:
+    build:
+      context: .                          # repo root — gives access to proto/ and agents/
+      dockerfile: agents/Dockerfile
+    networks: [gardener-net]
+    depends_on:
+      gardener:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./data:/data:ro
+    environment:
+      AGENT_TYPE: data_cleaner
+      SOIL_GRPC_HOST: gardener
+      SOIL_GRPC_PORT: "50051"
+      GARDENER_GRPC_HOST: gardener
+      GARDENER_GRPC_PORT: "50052"
+      LLM_PROVIDER: "${LLM_PROVIDER:-ollama}"
+      LLM_MODEL: "${LLM_MODEL:-llama3.2}"
+      OLLAMA_HOST: ollama
+      OLLAMA_PORT: "11434"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      SIMILARITY_THRESHOLD: "0.7"
+      MAX_TRAILS_PER_QUERY: "5"
+      DATA_DIR: /data
+      STARTUP_DELAY_S: "15"
+      LOOP_DELAY_S: "5"
+    deploy:
+      replicas: 3
+    restart: unless-stopped
+
+  # ─── Code Generation Agents (2 replicas) ─────────────────────────────────
+  agent-code:
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
+    networks: [gardener-net]
+    depends_on:
+      gardener:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+    environment:
+      AGENT_TYPE: code_generator
+      SOIL_GRPC_HOST: gardener
+      SOIL_GRPC_PORT: "50051"
+      GARDENER_GRPC_HOST: gardener
+      GARDENER_GRPC_PORT: "50052"
+      LLM_PROVIDER: "${LLM_PROVIDER:-ollama}"
+      LLM_MODEL: "${LLM_MODEL:-llama3.2}"
+      OLLAMA_HOST: ollama
+      OLLAMA_PORT: "11434"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      STARTUP_DELAY_S: "15"
+      LOOP_DELAY_S: "8"
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+
+  # ─── API Testing Agents (2 replicas) ─────────────────────────────────────
+  agent-api:
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
+    networks: [gardener-net]
+    depends_on:
+      gardener:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./data:/data:ro
+    environment:
+      AGENT_TYPE: api_tester
+      SOIL_GRPC_HOST: gardener
+      SOIL_GRPC_PORT: "50051"
+      GARDENER_GRPC_HOST: gardener
+      GARDENER_GRPC_PORT: "50052"
+      LLM_PROVIDER: "${LLM_PROVIDER:-ollama}"
+      LLM_MODEL: "${LLM_MODEL:-llama3.2}"
+      OLLAMA_HOST: ollama
+      OLLAMA_PORT: "11434"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ENDPOINTS_FILE: /data/api_endpoints.json
+      STARTUP_DELAY_S: "15"
+      LOOP_DELAY_S: "10"
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+
+  # ─── Seed Runner (one-shot task injector) ────────────────────────────────
+  seed-runner:
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
+    networks: [gardener-net]
+    depends_on:
+      gardener:
+        condition: service_started
+    volumes:
+      - ./data:/data:ro
+      - ./scripts:/scripts:ro
+    environment:
+      SOIL_GRPC_HOST: gardener
+      SOIL_GRPC_PORT: "50051"
+      GARDENER_GRPC_HOST: gardener
+      GARDENER_GRPC_PORT: "50052"
+      LLM_PROVIDER: "${LLM_PROVIDER:-ollama}"
+      LLM_MODEL: "${LLM_MODEL:-llama3.2}"
+      OLLAMA_HOST: ollama
+      OLLAMA_PORT: "11434"
+      STARTUP_DELAY_S: "5"
+    entrypoint: ["python", "/scripts/seed_tasks.py"]
+    profiles: [tools]   # Only runs with: docker compose --profile tools run seed-runner
+
+  # ─── Observer (soil inspector) ───────────────────────────────────────────
+  observer:
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
+    networks: [gardener-net]
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    environment:
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+    entrypoint: ["python", "/scripts/observe_soil.py"]
+    volumes:
+      - ./scripts:/scripts:ro
+    profiles: [tools]   # Only runs with: docker compose --profile tools run observer
+
+  # ─── Dashboard (live terminal UI) ────────────────────────────────────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
+    networks: [gardener-net]
+    depends_on:
+      gardener:
+        condition: service_started
+      chromadb:
+        condition: service_healthy
+    environment:
+      GARDENER_HOST: gardener
+      METRICS_PORT: "8080"
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+      DASHBOARD_REFRESH_S: "3"
+    entrypoint: ["python", "/scripts/dashboard.py"]
+    volumes:
+      - ./scripts:/scripts:ro
+    stdin_open: true
+    tty: true
+    profiles: [tools]   # Only runs with: docker compose --profile tools run dashboard

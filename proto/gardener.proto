@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package gardener;
+
+// The Gardener service manages agent lifecycle and resources.
+// Agents report health and request resources through this interface.
+service Gardener {
+  // Agent requests more compute/memory resources
+  rpc RequestResources   (ResourceRequest)    returns (ResourceAllocation);
+  // Agent reports its current health metrics (called periodically)
+  rpc ReportHealth       (HealthReport)       returns (HealthAck);
+  // Agent requests graceful self-termination
+  rpc RequestTermination (TerminationRequest) returns (Empty);
+}
+
+message ResourceRequest {
+  string agent_id    = 1;
+  float  cpu_ms      = 2;  // requested CPU time in ms
+  float  memory_mb   = 3;  // requested memory in MB
+  string reason      = 4;  // why more resources are needed
+}
+
+message ResourceAllocation {
+  bool   granted    = 1;
+  float  cpu_ms     = 2;  // granted amount (may be less than requested)
+  float  memory_mb  = 3;
+  string message    = 4;  // optional reason if denied
+}
+
+message HealthReport {
+  string agent_id        = 1;
+  float  failure_rate    = 2;  // 0.0 - 1.0 over last N tasks
+  int32  tasks_completed = 3;
+  float  cpu_ms          = 4;  // average CPU usage per task
+  float  memory_mb       = 5;  // current memory usage
+  string current_domain  = 6;  // task domain currently working on
+  string status          = 7;  // "active" | "idle" | "struggling"
+}
+
+message HealthAck {
+  string message          = 1;  // Gardener feedback (e.g. "consider switching domain")
+  bool   should_terminate = 2;  // true → agent must archive trails and exit
+  string terminate_reason = 3;  // "high_failure_rate" | "stagnant" | "redundant"
+}
+
+message TerminationRequest {
+  string agent_id = 1;
+  string reason   = 2;  // "low_productivity" | "self_requested" | "redundant"
+}
+
+message Empty {}
