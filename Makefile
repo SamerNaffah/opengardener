@@ -1,4 +1,5 @@
-.PHONY: up down logs seed observe dashboard demo clean build proto test test-rust test-python lint
+.PHONY: up down logs seed observe dashboard demo clean build proto test test-rust test-python lint \
+        generate-tasks run-experiment analyse eval
 
 # Copy .env if it doesn't exist
 .env:
@@ -81,6 +82,32 @@ test-python:
 
 # Run both
 test: test-rust test-python
+
+# ─── Evaluation harness ───────────────────────────────────────────────────
+# Generate 1 200-task synthetic corpus (idempotent; skips if file exists)
+generate-tasks:
+	@mkdir -p data/generated
+	PYTHONPATH=agents python3 scripts/generate_tasks.py \
+		--n 1200 --out data/generated/tasks.jsonl
+
+# Run both conditions (500 tasks × 2 seeds). Requires stack to be up.
+# OG_SEED defaults to 0; override with: make run-experiment OG_SEED=42
+run-experiment: generate-tasks
+	PYTHONPATH=agents OG_SEED=$(or $(OG_SEED),0) \
+		python3 scripts/run_experiment.py \
+		--tasks data/generated/tasks.jsonl \
+		--n 500 --seeds 0,1 \
+		--out-dir eval/runs
+
+# Analyse results → eval/RESULTS.md + eval/plots/
+analyse:
+	PYTHONPATH=agents python3 eval/analyse.py \
+		--runs-dir eval/runs \
+		--out eval/RESULTS.md \
+		--plots-dir eval/plots
+
+# Full evaluation pipeline
+eval: run-experiment analyse
 
 # Lint everything
 lint:

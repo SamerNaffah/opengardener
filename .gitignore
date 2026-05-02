@@ -32,3 +32,13 @@ gardener/src/generated/
 .idea/
 *.swp
 *.swo
+
+# Private reports
+audit_report.md
+AUDIT_REPORT.md
+
+# Evaluation artefacts (generated; not for VCS)
+eval/runs/
+eval/plots/
+eval/RESULTS.md
+data/generated/
