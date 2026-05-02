@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: cargo fmt
+        working-directory: gardener
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        working-directory: gardener
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo test
+        working-directory: gardener
+        run: cargo test --all-features
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install agent deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r agents/requirements.txt
+          pip install pytest
+      - name: Generate gRPC stubs
+        run: |
+          mkdir -p agents/base/generated
+          python -m grpc_tools.protoc \
+            -I proto \
+            --python_out=agents/base/generated \
+            --grpc_python_out=agents/base/generated \
+            proto/soil.proto proto/gardener.proto
+          touch agents/base/generated/__init__.py
+      - name: Run tests
+        run: pytest -q tests/
