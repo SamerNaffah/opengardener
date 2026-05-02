@@ -37,6 +37,12 @@ from .soil_client import SoilClient, SoilQueryResult
 
 logger = logging.getLogger(__name__)
 
+# ─── Reproducibility seed ───────────────────────────────────────────────────
+# OG_SEED makes random.choice / random.uniform deterministic for experiments.
+_og_seed_env = os.getenv("OG_SEED")
+if _og_seed_env is not None:
+    random.seed(int(_og_seed_env))
+
 # ─── Process-global embedder ────────────────────────────────────────────────
 _embedder: Optional[SentenceTransformer] = None
 _embedder_lock = threading.Lock()
@@ -163,7 +169,9 @@ class EmergentAgent:
 
         successes = [r for r in similar if r.outcome == "success"]
 
-        if successes:
+        exploit_disabled = os.getenv("EXPLOIT_DISABLED", "false").lower() in ("1", "true", "yes")
+
+        if successes and not exploit_disabled:
             # EXPLOIT: pick by composite (similarity × producing-agent reputation),
             # mirroring the Rust-side compose_score so client and server agree.
             best = max(successes, key=self._exploit_score)

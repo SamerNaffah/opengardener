@@ -46,6 +46,18 @@ pub struct AgentMetrics {
     pub age_secs: i64,
 }
 
+/// Slim snapshot for experiment evaluation polling.
+#[derive(Serialize)]
+pub struct EvalSnapshot {
+    pub timestamp: String,
+    pub soil_trails: u64,
+    pub trails_per_domain: HashMap<String, u64>,
+    pub active_agents: usize,
+    /// Per-domain success rate derived from per-agent failure rates.
+    /// Approximation: 1.0 − mean(failure_rate) for agents whose current_domain matches.
+    pub success_rate_by_domain: HashMap<String, f32>,
+}
+
 struct AppState {
     gardener: Arc<GardenerCore>,
     soil: Arc<Soil>,
@@ -145,6 +157,38 @@ async fn build_snapshot(state: &AppState) -> MetricsSnapshot {
     }
 }
 
+async fn eval_handler(State(state): State<Arc<AppState>>) -> Json<EvalSnapshot> {
+    let soil_stats = state.soil.get_stats().await;
+    let trails_per_domain = state.soil.count_per_domain(KNOWN_DOMAINS).await;
+    let agents = state.gardener.agent_snapshot().await;
+
+    // Per-domain success rate: 1 − mean(failure_rate) for agents in that domain.
+    let mut domain_failure_sums: HashMap<String, (f32, u32)> = HashMap::new();
+    for a in &agents {
+        let domain = a
+            .last_health_report
+            .as_ref()
+            .map(|r| r.current_domain.as_str())
+            .unwrap_or(&a.agent_type)
+            .to_string();
+        let entry = domain_failure_sums.entry(domain).or_insert((0.0, 0));
+        entry.0 += a.failure_rate();
+        entry.1 += 1;
+    }
+    let success_rate_by_domain: HashMap<String, f32> = domain_failure_sums
+        .into_iter()
+        .map(|(d, (sum, count))| (d, 1.0 - (sum / count as f32)))
+        .collect();
+
+    Json(EvalSnapshot {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        soil_trails: soil_stats.total_trails,
+        trails_per_domain,
+        active_agents: soil_stats.agent_count,
+        success_rate_by_domain,
+    })
+}
+
 async fn health_handler() -> &'static str {
     "ok"
 }
@@ -160,6 +204,7 @@ pub async fn serve(
     let app = Router::new()
         .route("/metrics", get(metrics_handler))
         .route("/metrics/prom", get(prom_handler))
+        .route("/metrics/eval", get(eval_handler))
         .route("/health", get(health_handler))
         .with_state(state);
 
