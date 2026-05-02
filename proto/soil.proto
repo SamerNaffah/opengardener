@@ -30,11 +30,17 @@ message TrailResult {
   string          trail_id     = 1;
   string          outcome      = 2;  // "success" | "failure"
   string          approach     = 3;  // JSON-encoded approach dict
-  float           success_rate = 4;  // historical success rate for this approach
+  // Historical success rate for the agent that produced this trail (EMA, 0.0-1.0).
+  // NOT cosine similarity — see field 9 below for similarity.
+  float           success_rate = 4;
   map<string,float> resources  = 5;  // cpu_ms, memory_mb
   string          agent_id     = 6;
   string          task_domain  = 7;
   int32           hits         = 8;  // how many times this trail was followed
+  float           similarity   = 9;  // cosine similarity to query embedding (0.0-1.0)
+  string          task_summary = 10; // human-readable task summary, useful for debugging/UI
+  // V2 prep: pheromone strength after decay (1.0 = fresh, decays to 0)
+  float           strength     = 11;
 }
 
 message Trail {

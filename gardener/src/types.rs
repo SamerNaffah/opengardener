@@ -10,19 +10,39 @@ impl AgentId {
     }
 }
 
+impl Default for AgentId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl std::fmt::Display for AgentId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Stored alongside the trail metadata. The wire format is the lowercase string
+/// (`"success"` | `"failure"`) — keep this enum for callers that want type safety
+/// when constructing trails programmatically.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum Outcome {
-    Success(f32), // confidence score 0.0-1.0
-    Failure(FailureType),
+    Success,
+    Failure,
+}
+
+impl Outcome {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Outcome::Success => "success",
+            Outcome::Failure => "failure",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FailureType {
     PermissionDenied,
     Timeout,
@@ -107,7 +127,8 @@ pub struct AgentHealthReport {
     pub status: AgentStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum AgentStatus {
     Active,
     Idle,
@@ -121,5 +142,23 @@ impl std::fmt::Display for AgentStatus {
             AgentStatus::Idle => write!(f, "idle"),
             AgentStatus::Struggling => write!(f, "struggling"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outcome_round_trips_to_string() {
+        assert_eq!(Outcome::Success.as_str(), "success");
+        assert_eq!(Outcome::Failure.as_str(), "failure");
+    }
+
+    #[test]
+    fn pheromone_trail_has_unique_id() {
+        let t1 = PheromoneTrail::new(vec![0.0; 4], "success", serde_json::Value::Null, "a", "d", "s");
+        let t2 = PheromoneTrail::new(vec![0.0; 4], "success", serde_json::Value::Null, "a", "d", "s");
+        assert_ne!(t1.trail_id, t2.trail_id);
     }
 }

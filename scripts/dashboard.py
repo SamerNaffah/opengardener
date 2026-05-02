@@ -31,57 +31,46 @@ from rich.text import Text
 
 GARDENER_HOST = os.getenv("GARDENER_HOST", "localhost")
 GARDENER_PORT = os.getenv("METRICS_PORT", "8080")
-CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
-CHROMA_PORT = os.getenv("CHROMA_PORT", "8000")
 REFRESH_SECS = float(os.getenv("DASHBOARD_REFRESH_S", "3"))
 
 GARDENER_METRICS_URL = f"http://{GARDENER_HOST}:{GARDENER_PORT}/metrics"
-CHROMA_URL = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2"
-COLLECTION_NAME = "opengardener_soil"
 
 console = Console()
 
+# A persistent client gets keepalive + connection pooling between refreshes.
+_HTTP = httpx.Client(timeout=3.0)
+
 
 def fetch_metrics() -> Optional[dict]:
+    """All trail/agent data is now sourced from the Gardener metrics endpoint.
+
+    Previously we hit ChromaDB's REST directly, which (a) used the wrong v2 path
+    (`/api/v2/collections/<NAME>` — should be tenant/database-scoped + use the
+    collection ID) and (b) duplicated work the Gardener already does. Single
+    source of truth fixes both.
+    """
     try:
-        r = httpx.get(GARDENER_METRICS_URL, timeout=3.0)
+        r = _HTTP.get(GARDENER_METRICS_URL)
         r.raise_for_status()
         return r.json()
     except Exception:
         return None
 
 
-def fetch_soil_breakdown() -> dict:
-    """Fetch per-domain trail counts from ChromaDB."""
-    try:
-        # Get all trail metadata (limit to recent 1000)
-        r = httpx.post(
-            f"{CHROMA_URL}/collections/{COLLECTION_NAME}/query",
-            json={
-                "query_embeddings": [[0.0] * 384],
-                "n_results": 500,
-                "include": ["metadatas", "distances"],
-            },
-            timeout=5.0,
-        )
-        if r.status_code != 200:
-            return {}
+def soil_breakdown_from_metrics(metrics: Optional[dict]) -> dict:
+    """Compute domain breakdown from the Gardener metrics snapshot.
 
-        data = r.json()
-        metadatas = data.get("metadatas", [[]])[0]
-
-        breakdown: dict[str, dict] = {}
-        for meta in metadatas:
-            domain = meta.get("task_domain", "unknown")
-            outcome = meta.get("outcome", "unknown")
-            if domain not in breakdown:
-                breakdown[domain] = {"success": 0, "failure": 0, "total": 0}
-            breakdown[domain][outcome] = breakdown[domain].get(outcome, 0) + 1
-            breakdown[domain]["total"] += 1
-
-        return breakdown
-    except Exception:
+    The snapshot exposes per-domain trail counts but not outcome split — the
+    full success/failure breakdown only matters for the observe_soil one-shot
+    inspector. Here we degrade gracefully to total counts.
+    """
+    if not metrics:
         return {}
+    per_domain = metrics.get("soil", {}).get("trails_per_domain", {}) or {}
+    return {
+        d: {"success": 0, "failure": 0, "total": int(n)}
+        for d, n in per_domain.items()
+    }
 
 
 def status_color(status: str) -> str:
@@ -242,14 +231,14 @@ def build_layout(metrics: Optional[dict], soil_breakdown: dict) -> Layout:
 def run():
     console.print(
         "\n[bold green]OpenGardener Dashboard[/bold green]  "
-        f"[dim]gardener={GARDENER_HOST}:{GARDENER_PORT}  chroma={CHROMA_HOST}:{CHROMA_PORT}[/dim]\n"
+        f"[dim]gardener={GARDENER_HOST}:{GARDENER_PORT}[/dim]\n"
         "[dim]Press Ctrl+C to exit[/dim]\n"
     )
 
     with Live(console=console, refresh_per_second=1, screen=True) as live:
         while True:
             metrics = fetch_metrics()
-            soil_breakdown = fetch_soil_breakdown()
+            soil_breakdown = soil_breakdown_from_metrics(metrics)
             live.update(build_layout(metrics, soil_breakdown))
             time.sleep(REFRESH_SECS)
 

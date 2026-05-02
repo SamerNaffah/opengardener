@@ -1,4 +1,4 @@
-.PHONY: up down logs seed observe dashboard demo clean build proto
+.PHONY: up down logs seed observe dashboard demo clean build proto test test-rust test-python lint
 
 # Copy .env if it doesn't exist
 .env:
@@ -63,3 +63,26 @@ logs-gardener:
 # Watch all agent logs
 logs-agents:
 	docker compose logs -f agent-data agent-code agent-api
+
+# ─── Tests / Lint ─────────────────────────────────────────────────────────
+# Rust unit tests (cargo test under gardener/)
+test-rust:
+	cd gardener && cargo test --all-features
+
+# Python unit tests (regenerates stubs first so tests don't depend on prior `make proto`)
+test-python:
+	mkdir -p agents/base/generated
+	python3 -m grpc_tools.protoc -I proto \
+		--python_out=agents/base/generated \
+		--grpc_python_out=agents/base/generated \
+		proto/soil.proto proto/gardener.proto
+	touch agents/base/generated/__init__.py
+	PYTHONPATH=agents pytest -q tests/
+
+# Run both
+test: test-rust test-python
+
+# Lint everything
+lint:
+	cd gardener && cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings
+	@echo "Tip: run 'pip install ruff && ruff check agents/' for Python linting."

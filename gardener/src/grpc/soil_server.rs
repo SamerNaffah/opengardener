@@ -39,13 +39,24 @@ impl SoilService for SoilGrpcService {
 
         let results = self.soil.query_similar(req.embedding, limit, threshold, domain).await;
 
+        // Best-effort hit-count bump for trails we surfaced as candidates.
+        // Fire-and-forget; doesn't block the response.
+        for r in &results {
+            self.soil.record_hit(&r.trail_id);
+        }
+
         let trail_results: Vec<TrailResult> = results
             .into_iter()
             .map(|r| TrailResult {
                 trail_id: r.trail_id,
                 outcome: r.outcome,
                 approach: r.approach.to_string(),
-                success_rate: r.similarity,
+                // FIX: success_rate now means *agent's historical EMA success rate*.
+                // The cosine similarity is exposed separately as `similarity`.
+                success_rate: r.success_rate,
+                similarity: r.similarity,
+                strength: r.strength,
+                task_summary: r.task_summary,
                 resources: std::collections::HashMap::from([
                     ("cpu_ms".to_string(), r.cpu_ms),
                 ]),

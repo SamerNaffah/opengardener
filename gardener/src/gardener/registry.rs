@@ -2,7 +2,13 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
-use crate::types::{AgentId, AgentHealthReport, AgentStatus};
+use crate::types::{AgentHealthReport, AgentId};
+
+/// Stagnant-agent thresholds. Kept in sync with the observer's defaults.
+const STAGNANT_AGE_HOURS: i64 = 24;
+const STAGNANT_MIN_TASKS: i32 = 5;
+const STRUGGLING_FAILURE_RATE: f32 = 0.7;
+const STRUGGLING_MIN_TASKS: i32 = 20;
 
 #[derive(Debug, Clone)]
 pub struct AgentHandle {
@@ -42,16 +48,23 @@ impl AgentHandle {
 
     pub fn is_stagnant(&self) -> bool {
         let age = Utc::now() - self.created_at;
-        age.num_hours() > 24 && self.tasks_completed() < 5
+        age.num_hours() > STAGNANT_AGE_HOURS && self.tasks_completed() < STAGNANT_MIN_TASKS
     }
 
     pub fn is_struggling(&self) -> bool {
-        self.failure_rate() > 0.7 && self.tasks_completed() > 20
+        self.failure_rate() > STRUGGLING_FAILURE_RATE
+            && self.tasks_completed() > STRUGGLING_MIN_TASKS
     }
 }
 
 pub struct AgentRegistry {
     agents: RwLock<HashMap<String, AgentHandle>>,
+}
+
+impl Default for AgentRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AgentRegistry {
@@ -71,7 +84,9 @@ impl AgentRegistry {
         if let Some(handle) = agents.get_mut(agent_id) {
             handle.update_health(report);
         } else {
-            // Auto-register unknown agents that report health (Docker agents self-register on first report)
+            // Auto-register unknown agents that report health (Docker agents
+            // self-register on first report). We use the reported `current_domain`
+            // as the agent_type for nicer dashboards.
             let id = AgentId(agent_id.to_string());
             let domain = report.current_domain.clone();
             let mut handle = AgentHandle::new(id, &domain);
@@ -105,5 +120,41 @@ impl AgentRegistry {
                     .unwrap_or(false)
             })
             .count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::AgentStatus;
+
+    fn report(domain: &str, failure_rate: f32, tasks: i32) -> AgentHealthReport {
+        AgentHealthReport {
+            agent_id: "x".into(),
+            failure_rate,
+            tasks_completed: tasks,
+            cpu_ms: 0.0,
+            memory_mb: 0.0,
+            current_domain: domain.into(),
+            status: AgentStatus::Active,
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_registers_unknown_agents() {
+        let r = AgentRegistry::new();
+        r.update_health("alpha", report("data_cleaning", 0.0, 1)).await;
+        assert_eq!(r.count().await, 1);
+        assert_eq!(r.count_by_domain("data_cleaning").await, 1);
+        assert_eq!(r.count_by_domain("api_testing").await, 0);
+    }
+
+    #[tokio::test]
+    async fn struggling_requires_minimum_tasks() {
+        let mut h = AgentHandle::new(AgentId::new(), "x");
+        h.update_health(report("d", 0.95, 10));
+        assert!(!h.is_struggling(), "10 tasks is below the min-task floor");
+        h.update_health(report("d", 0.95, 25));
+        assert!(h.is_struggling());
     }
 }

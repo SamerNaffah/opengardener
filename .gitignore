@@ -7,9 +7,9 @@
 .env
 *.env.local
 
-# Rust
+# Rust — `Cargo.lock` is intentionally checked in for binary crates
+# (reproducible builds). Only `target/` is ignored.
 gardener/target/
-gardener/Cargo.lock
 
 # Python
 __pycache__/
