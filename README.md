@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Biologically-inspired multi-agent orchestration — where agents grow, specialize, and are pruned like a garden.</strong>
+  <strong>Biologically-inspired multi-agent orchestration - where agents grow, specialize, and are pruned like a garden.</strong>
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
 
 ## What is OpenGardener?
 
-OpenGardener is a research prototype for a **stigmergic multi-agent system** — agents coordinate by modifying a shared environment (the *Soil*), not by sending messages to each other. This mirrors how ant colonies and other biological systems achieve complex, adaptive behavior without central planning.
+OpenGardener is a research prototype for a **stigmergic multi-agent system** - agents coordinate by modifying a shared environment (the *Soil*), not by sending messages to each other. This mirrors how ant colonies and other biological systems achieve complex, adaptive behavior without central planning.
 
 The system is inspired by the metaphor of a garden:
 
@@ -63,7 +63,7 @@ The system is inspired by the metaphor of a garden:
 
 **Python** runs the agents. Each agent embeds tasks via `sentence-transformers`, queries the Soil for past approaches, executes with exploit-or-explore logic, and deposits pheromone trails after every task.
 
-**ChromaDB** is the Soil — a persistent vector database where all agent experience lives.
+**ChromaDB** is the Soil - a persistent vector database where all agent experience lives.
 
 **Ollama** provides a fully local, free LLM (default: `llama3.2`) for approach generation. Claude and OpenAI are also supported.
 
@@ -101,7 +101,7 @@ When an agent's `failure_rate > 0.7` across `>20 tasks`, or it becomes stagnant 
 On the agent's next health report, `HealthAck.should_terminate = true` is returned. The agent:
 1. Logs the prune signal
 2. Sends `RequestTermination` to the Gardener (confirming graceful shutdown)
-3. Exits — its **pheromone trails remain in the Soil** as collective memory for future agents
+3. Exits - its **pheromone trails remain in the Soil** as collective memory for future agents
 
 No agent knowledge is destroyed on pruning.
 
@@ -173,7 +173,7 @@ Set `LLM_MODEL` to override the model name.
 | `CodeGeneratorAgent` | `code_generation` | `llm_direct` | `template_based` |
 | `ApiTesterAgent` | `api_testing` | `basic_get` | `health_check` |
 
-Agents self-select strategies via Soil queries — the genome defaults are only used on first run before any trails exist.
+Agents self-select strategies via Soil queries - the genome defaults are only used on first run before any trails exist.
 
 ---
 
@@ -266,7 +266,7 @@ make proto          Regenerate Python gRPC stubs locally
 
 | Version | Focus |
 |---------|-------|
-| **V1** (now) | Proof of concept — stigmergic pipeline, auto-pruning, live dashboard |
+| **V1** (now) | Proof of concept - stigmergic pipeline, auto-pruning, live dashboard |
 | **V2** | Auto-spawning of agents into detected niches, pheromone decay, persistent agent state |
 | **V3** | WebAssembly sandboxing (Wasmtime), capability-based security, multi-node distribution |
 | **V4** | Prometheus/Grafana observability, mTLS, compliance-grade audit logging |
