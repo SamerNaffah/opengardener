@@ -12,15 +12,19 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python dependencies first (Docker layer caching)
-COPY requirements.txt .
+COPY agents/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download the sentence-transformers model during build
 # (avoids downloading at runtime which delays first task)
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
-# Copy proto files (copied into build context by docker-compose)
+# Copy proto files and agent code
 COPY proto/ /proto/
+COPY agents/ .
+
+# Regenerate gRPC stubs from proto after source copy so they match the
+# installed grpcio-tools version (avoids gencode/runtime version mismatch).
 RUN mkdir -p /app/base/generated && \
     python -m grpc_tools.protoc \
         -I /proto \
@@ -28,9 +32,6 @@ RUN mkdir -p /app/base/generated && \
         --grpc_python_out=/app/base/generated \
         /proto/soil.proto /proto/gardener.proto && \
     touch /app/base/generated/__init__.py
-
-# Copy agent code
-COPY agents/ .
 
 # Data and tasks directories (mounted via Docker volumes)
 RUN mkdir -p /data /tasks

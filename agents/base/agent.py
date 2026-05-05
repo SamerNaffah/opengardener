@@ -160,10 +160,11 @@ class EmergentAgent:
         embedding = self.embed(task_description)
 
         # Query the soil for similar past tasks (both success and failure outcomes).
+        _sim_thresh = float(os.getenv("SIMILARITY_THRESHOLD", "0.5"))
         similar = self.soil.query_similar(
             embedding=embedding,
             limit=5,
-            threshold=0.7,
+            threshold=_sim_thresh,
             domain=self.task_domain,
         )
 
