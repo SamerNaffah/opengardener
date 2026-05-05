@@ -122,7 +122,8 @@ class DataCleanerAgent(EmergentAgent):
         if strategy.get("drop_duplicates", True):
             df = df.drop_duplicates()
 
-        output_path = file_path.replace(".csv", "_cleaned.csv")
+        import os as _os
+        output_path = _os.path.join("/tmp", _os.path.basename(file_path).replace(".csv", "_cleaned.csv"))
         df.to_csv(output_path, index=False)
 
         return {
@@ -145,7 +146,8 @@ class DataCleanerAgent(EmergentAgent):
         for pattern in patterns:
             content = re.sub(pattern, " ", content)
 
-        output_path = file_path.replace(".csv", "_regex_cleaned.csv")
+        import os as _os
+        output_path = _os.path.join("/tmp", _os.path.basename(file_path).replace(".csv", "_regex_cleaned.csv"))
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(content)
 
@@ -172,7 +174,8 @@ class DataCleanerAgent(EmergentAgent):
         for col in df.select_dtypes(include=["object"]).columns:
             df[col] = df[col].fillna("UNKNOWN")
 
-        output_path = file_path.replace(".csv", "_filled.csv")
+        import os as _os
+        output_path = _os.path.join("/tmp", _os.path.basename(file_path).replace(".csv", "_filled.csv"))
         df.to_csv(output_path, index=False)
 
         return {

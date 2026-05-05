@@ -9,7 +9,7 @@
 # Build:    docker build -f docker/gardener/Dockerfile .
 # Run:      ports 50051 (Soil gRPC), 50052 (Gardener gRPC), 8080 (metrics HTTP).
 #
-FROM rust:1.82-slim AS builder
+FROM rust:1.86-slim AS builder
 
 WORKDIR /app
 
@@ -25,7 +25,7 @@ COPY gardener/Cargo.toml gardener/build.rs ./
 RUN mkdir -p src && \
     echo 'fn main() { println!("dependency-prebuild stub"); }' > src/main.rs && \
     cargo build --release || true && \
-    rm -rf src
+    rm -rf src target/release/gardener target/release/deps/gardener-*
 
 # ── Real build ─────────────────────────────────────────────────────────────
 COPY gardener/ .
