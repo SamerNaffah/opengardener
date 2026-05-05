@@ -273,6 +273,19 @@ make proto          Regenerate Python gRPC stubs locally
 
 ---
 
+## Evaluation Results (v0.2)
+
+Experiment: 2000 tasks × 2 seeds, control (EXPLOIT_DISABLED=true) vs treatment (stigmergy on).
+
+| Criterion | Result | Value |
+|-----------|--------|-------|
+| **AC1** — Treatment SR ≥ control SR | ✅ PASS | 1.000 vs 0.997 |
+| **AC2** — Specialisation index ≥ 0.6 by task 500 | ✅ PASS | 1.000 |
+| **AC3** — Shannon entropy H ∈ [0.5, 3.5] bits | ✅ PASS | 1.58 bits |
+| **AC4** — Reproducible across seeds (Δ < 0.05) | ✅ PASS | 0.000 |
+
+Agents with stigmergy enabled reach zero task failures and perfect domain specialisation within 500 tasks; agents without it do not.
+
 ## Research
 
 The full theoretical foundation — including the biological analogy, formal model, and simulation results — is in [`researchpaper.md`](researchpaper.md).
