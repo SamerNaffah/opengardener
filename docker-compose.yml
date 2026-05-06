@@ -93,9 +93,12 @@ services:
       OLLAMA_PORT: "11434"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      SIMILARITY_THRESHOLD: "0.7"
+      SIMILARITY_THRESHOLD: "0.5"
       MAX_TRAILS_PER_QUERY: "5"
       DATA_DIR: /data
+      TASKS_FILE: /data/generated/tasks.jsonl
+      INJECT_MALFORMED: "true"
+      FAILURE_INJECTION_RATE: "0.0"
       STARTUP_DELAY_S: "15"
       LOOP_DELAY_S: "5"
     deploy:
@@ -125,6 +128,8 @@ services:
       OLLAMA_PORT: "11434"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      TASKS_FILE: /data/generated/tasks.jsonl
+      SIMILARITY_THRESHOLD: "0.5"
       STARTUP_DELAY_S: "15"
       LOOP_DELAY_S: "8"
     deploy:
@@ -161,6 +166,41 @@ services:
       LOOP_DELAY_S: "10"
     deploy:
       replicas: 2
+    restart: unless-stopped
+
+  # ─── Generic Agents (3 replicas) — cross-domain, emergent specialisation ──
+  agent-generic:
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
+    networks: [gardener-net]
+    depends_on:
+      gardener:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./data:/data:ro
+    environment:
+      AGENT_TYPE: generic
+      SOIL_GRPC_HOST: gardener
+      SOIL_GRPC_PORT: "50051"
+      GARDENER_GRPC_HOST: gardener
+      GARDENER_GRPC_PORT: "50052"
+      LLM_PROVIDER: "${LLM_PROVIDER:-ollama}"
+      LLM_MODEL: "${LLM_MODEL:-llama3.2}"
+      OLLAMA_HOST: ollama
+      OLLAMA_PORT: "11434"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      TASKS_FILE: /data/generated/tasks.jsonl
+      FAILURE_INJECTION_RATE: "0.3"
+      SIMILARITY_THRESHOLD: "0.5"
+      DATA_DIR: /data
+      STARTUP_DELAY_S: "20"
+      LOOP_DELAY_S: "6"
+    deploy:
+      replicas: 3
     restart: unless-stopped
 
   # ─── Seed Runner (one-shot task injector) ────────────────────────────────

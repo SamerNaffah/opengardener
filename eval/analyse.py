@@ -1,15 +1,21 @@
 """
-OpenGardener evaluation analysis.
+OpenGardener evaluation analysis — Round 2.
 
-Reads all JSONL run files from eval/runs/ (or --runs-dir), computes the four
-acceptance criteria, generates matplotlib plots, and writes eval/RESULTS.md.
+Reads all JSONL run files from eval/runs/ (or --runs-dir), computes the five
+Round-2 acceptance criteria, generates matplotlib plots, and writes eval/RESULTS.md.
 
 Acceptance criteria (all must pass):
-  AC1  Treatment SR >= control SR (EXPLOIT reaches zero failures; EXPLORE does not)
-  AC2  Mean specialisation index >= 0.6 within 500 tasks
-  AC3  Shannon entropy of (domain, method) stays bounded (0.5 <= H <= 3.5)
-       — lower bound prevents total collapse, upper prevents no learning
-  AC4  Results reproducible across two seeds (|Δ treatment SR| < 0.05)
+  AC1'  On tasks with difficulty > 0.5: treatment_SR − control_SR ≥ 0.20
+        Soil retrieval helps when the task is non-trivial.
+  AC2'  GenericAgent mean specialisation index at task 500 ≥ 0.6
+        Agents learn to specialise when they had a choice.
+  AC2'b GenericAgent mean specialisation index at task 100 ≤ 0.5
+        Specialisation isn't immediate — it grows from experience.
+  AC3'  Per-domain approach entropy: 0.5 ≤ H ≤ 2.5 bits for all domains
+        Bounded diversity (not collapsed, not chaos).
+  AC4'  Per-task SR variance across two seeds > 0.02 (paths differ)
+        AND |final_sr_seed_a − final_sr_seed_b| < 0.05 (destinations match)
+        Real stochasticity converging to consistent outcomes.
 
 Plots (saved to eval/plots/):
   01_success_rate.png        — cumulative success rate over tasks, control vs treatment
@@ -58,6 +64,8 @@ class RunRecord(NamedTuple):
     entropy: float
     timestamp: str
     seed: int
+    difficulty: float
+    inferred_domain: str  # non-empty only for generic condition
 
 
 def _load_runs(runs_dir: Path) -> list[RunRecord]:
@@ -95,6 +103,8 @@ def _load_runs(runs_dir: Path) -> list[RunRecord]:
                     entropy=float(d.get("entropy", 0.0)),
                     timestamp=d.get("timestamp", ""),
                     seed=seed,
+                    difficulty=float(d.get("difficulty", 0.0)),
+                    inferred_domain=d.get("inferred_domain") or "",
                 ))
     return records
 
@@ -242,7 +252,7 @@ def plot_trails(
     _save(fig, plots_dir / "04_trails_per_domain.png")
 
 
-# ─── Acceptance criteria ─────────────────────────────────────────────────────
+# ─── Acceptance criteria (Round 2) ───────────────────────────────────────────
 
 def _evaluate_criteria(
     final_rates: dict[str, float],
@@ -250,79 +260,113 @@ def _evaluate_criteria(
     entropy_series: dict[str, list[float]],
     seeds: list[int],
     by_condition_seed: dict[tuple[str, int], list[RunRecord]],
+    all_records: list[RunRecord],
 ) -> list[dict]:
     results = []
 
-    # AC1: treatment SR >= control SR (stigmergic feedback eliminates failures).
-    # These synthetic tasks have ~100% SR ceiling for both conditions, so the 1.3×
-    # threshold from the original spec is unachievable. The meaningful signal is
-    # that EXPLOIT converges on correct strategies and reaches zero failures while
-    # EXPLORE continues to make occasional errors.
-    ctrl_sr = final_rates.get("control", 0.0)
-    trt_sr  = final_rates.get("treatment", 0.0)
-    ratio = (trt_sr / ctrl_sr) if ctrl_sr > 0 else 1.0
-    results.append({
-        "id": "AC1",
-        "description": "Treatment SR ≥ control SR (stigmergic feedback reaches zero failures)",
-        "value": f"ratio = {ratio:.4f}  (treatment={trt_sr:.4f}, control={ctrl_sr:.4f})",
-        "pass": trt_sr >= ctrl_sr,
-    })
-
-    # AC2: mean specialisation index >= 0.6 within 500 tasks
-    trt_spec = mean_spec_at_500.get("treatment", 0.0)
-    results.append({
-        "id": "AC2",
-        "description": "Mean specialisation index ≥ 0.6 within 500 tasks",
-        "value": f"mean_spec_index = {trt_spec:.4f}",
-        "pass": trt_spec >= 0.6,
-    })
-
-    # AC3: entropy bounded in [0.5, 3.5] for treatment
-    trt_ents = entropy_series.get("treatment", [])
-    if trt_ents:
-        final_ent = trt_ents[-1]
-        ent_ok = 0.5 <= final_ent <= 3.5
-    else:
-        final_ent = 0.0
-        ent_ok = False
-    results.append({
-        "id": "AC3",
-        "description": "Final Shannon entropy H in [0.5, 3.5] bits",
-        "value": f"H = {final_ent:.4f} bits",
-        "pass": ent_ok,
-    })
-
-    # AC4: reproducible across two seeds (|Δ treatment SR| < 0.05)
-    if len(seeds) >= 2:
-        sr_by_seed = {}
-        for s in seeds[:2]:
-            recs = by_condition_seed.get(("treatment", s), [])
-            if recs:
-                rates = _cumulative_success_rate(sorted(recs, key=lambda r: r.task_seq))
-                sr_by_seed[s] = rates[-1]
-        if len(sr_by_seed) == 2:
-            s0, s1 = seeds[0], seeds[1]
-            diff = abs(sr_by_seed.get(s0, 0) - sr_by_seed.get(s1, 0))
-            results.append({
-                "id": "AC4",
-                "description": "Reproducible across two seeds: |Δ treatment SR| < 0.05",
-                "value": f"|seed{s0}={sr_by_seed.get(s0,0):.3f} − seed{s1}={sr_by_seed.get(s1,0):.3f}| = {diff:.4f}",
-                "pass": diff < 0.05,
-            })
-        else:
-            results.append({
-                "id": "AC4",
-                "description": "Reproducible across two seeds",
-                "value": "only one seed available — skipped",
-                "pass": None,
-            })
+    # ── AC1': On hard tasks (difficulty > 0.5), treatment_SR − control_SR ≥ 0.20
+    hard_ctrl = [r for r in all_records if r.condition == "control" and r.difficulty > 0.5]
+    hard_trt  = [r for r in all_records if r.condition == "treatment" and r.difficulty > 0.5]
+    if hard_ctrl and hard_trt:
+        ctrl_hard_sr = sum(1 for r in hard_ctrl if r.success) / len(hard_ctrl)
+        trt_hard_sr  = sum(1 for r in hard_trt  if r.success) / len(hard_trt)
+        delta = trt_hard_sr - ctrl_hard_sr
+        results.append({
+            "id": "AC1'",
+            "description": "Hard-task (difficulty>0.5) treatment SR − control SR ≥ 0.20",
+            "value": f"Δ = {delta:.3f}  (treatment={trt_hard_sr:.3f}, control={ctrl_hard_sr:.3f}, n={len(hard_trt)})",
+            "pass": delta >= 0.20,
+        })
     else:
         results.append({
-            "id": "AC4",
-            "description": "Reproducible across two seeds",
-            "value": "only one seed run — skipped",
+            "id": "AC1'",
+            "description": "Hard-task SR delta ≥ 0.20",
+            "value": f"insufficient hard-task records (ctrl={len(hard_ctrl)}, trt={len(hard_trt)})",
             "pass": None,
         })
+
+    # ── AC2': GenericAgent spec_idx at task 500 ≥ 0.6
+    generic_recs = sorted(
+        [r for r in all_records if r.condition == "generic"],
+        key=lambda r: r.task_seq,
+    )
+    if generic_recs:
+        at_500 = [r for r in generic_recs if r.task_seq <= 500]
+        spec_at_500 = at_500[-1].specialisation_index if at_500 else 0.0
+        results.append({
+            "id": "AC2'",
+            "description": "GenericAgent specialisation index at task 500 ≥ 0.6",
+            "value": f"spec_idx@500 = {spec_at_500:.4f}",
+            "pass": spec_at_500 >= 0.6,
+        })
+
+        # ── AC2'b: GenericAgent spec_idx at task 100 ≤ 0.5 (gradual, not instant)
+        at_100 = [r for r in generic_recs if r.task_seq <= 100]
+        spec_at_100 = at_100[-1].specialisation_index if at_100 else 0.0
+        results.append({
+            "id": "AC2'b",
+            "description": "GenericAgent specialisation index at task 100 ≤ 0.5 (gradual growth)",
+            "value": f"spec_idx@100 = {spec_at_100:.4f}",
+            "pass": spec_at_100 <= 0.5,
+        })
+    else:
+        results.append({"id": "AC2'",  "description": "GenericAgent spec@500 ≥ 0.6", "value": "no generic records", "pass": None})
+        results.append({"id": "AC2'b", "description": "GenericAgent spec@100 ≤ 0.5", "value": "no generic records", "pass": None})
+
+    # ── AC3': Per-domain entropy 0.5 ≤ H ≤ 2.5 bits (tighter upper bound than R1)
+    trt_recs = [r for r in all_records if r.condition == "treatment"]
+    domains = sorted({r.domain for r in trt_recs})
+    domain_ent_ok = True
+    domain_ent_vals = {}
+    for dom in domains:
+        dom_recs = [r for r in trt_recs if r.domain == dom]
+        method_counts: dict[str, int] = {}
+        for r in dom_recs:
+            method_counts[r.strategy_method] = method_counts.get(r.strategy_method, 0) + 1
+        total = sum(method_counts.values())
+        if total == 0:
+            h = 0.0
+        else:
+            h = -sum((c / total) * math.log2(c / total) for c in method_counts.values() if c > 0)
+        domain_ent_vals[dom] = h
+        if not (0.5 <= h <= 2.5):
+            domain_ent_ok = False
+    ent_summary = "  ".join(f"{d}={v:.2f}" for d, v in domain_ent_vals.items())
+    results.append({
+        "id": "AC3'",
+        "description": "Per-domain entropy in [0.5, 2.5] bits for all domains",
+        "value": ent_summary or "no data",
+        "pass": domain_ent_ok if domain_ent_vals else None,
+    })
+
+    # ── AC4': per-task SR variance > 0.02 (paths differ) AND |Δ final SR| < 0.05
+    if len(seeds) >= 2:
+        s0, s1 = seeds[0], seeds[1]
+        recs_s0 = sorted(by_condition_seed.get(("treatment", s0), []), key=lambda r: r.task_seq)
+        recs_s1 = sorted(by_condition_seed.get(("treatment", s1), []), key=lambda r: r.task_seq)
+        # Align by task_seq up to min length
+        min_len = min(len(recs_s0), len(recs_s1))
+        if min_len > 10:
+            successes_s0 = [float(r.success) for r in recs_s0[:min_len]]
+            successes_s1 = [float(r.success) for r in recs_s1[:min_len]]
+            # Per-task variance: variance of (s0[i] XOR s1[i]) ≈ variance of abs diff
+            per_task_diff = [abs(a - b) for a, b in zip(successes_s0, successes_s1)]
+            variance = float(np.var(per_task_diff))
+            final_sr_s0 = sum(successes_s0) / len(successes_s0)
+            final_sr_s1 = sum(successes_s1) / len(successes_s1)
+            final_delta = abs(final_sr_s0 - final_sr_s1)
+            paths_differ = variance > 0.02
+            destinations_match = final_delta < 0.05
+            results.append({
+                "id": "AC4'",
+                "description": "Per-task variance > 0.02 (paths differ) AND |Δ final SR| < 0.05",
+                "value": f"variance={variance:.4f}  |Δ_final|={final_delta:.4f}",
+                "pass": paths_differ and destinations_match,
+            })
+        else:
+            results.append({"id": "AC4'", "description": "Variance > 0.02 AND Δ < 0.05", "value": "insufficient records per seed", "pass": None})
+    else:
+        results.append({"id": "AC4'", "description": "Variance > 0.02 AND Δ < 0.05", "value": "only one seed — skipped", "pass": None})
 
     return results
 
@@ -453,6 +497,7 @@ def main():
         entropy_series=entropy_series,
         seeds=seeds,
         by_condition_seed=by_condition_seed,
+        all_records=records,
     )
 
     for c in criteria:

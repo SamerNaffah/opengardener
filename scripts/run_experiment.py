@@ -1,9 +1,10 @@
 """
 OpenGardener evaluation experiment runner.
 
-Runs two conditions in sequence against real agents:
+Runs three conditions in sequence against real agents:
   CONTROL   — EXPLOIT_DISABLED=true  (always explore; no soil feedback)
   TREATMENT — EXPLOIT_DISABLED=false (stigmergic specialisation on)
+  GENERIC   — EXPLOIT_DISABLED=false, GenericAgent (cross-domain; tests AC2'/AC2'b)
 
 For each condition the script:
   1. Boots agents (or connects to already-running ones).
@@ -153,7 +154,10 @@ def run_condition(
     method_counts: Counter = Counter()
 
     records: list[dict] = []
+    import random as _rand
+    _rng = _rand.Random(seed ^ (0xC0FFEE if exploit_disabled else 0xBEEF))
     selected_tasks = tasks[:n]
+    _rng.shuffle(selected_tasks)  # each condition sees tasks in different order
 
     logger.info("Condition=%s seed=%d tasks=%d exploit_disabled=%s", condition, seed, len(selected_tasks), exploit_disabled)
 
@@ -169,24 +173,24 @@ def run_condition(
             success = False
             method = "unknown"
 
+            difficulty = float(task.get("difficulty", 0.0))
+            verifier = task.get("verifier") or ""
+
             try:
                 if domain == "data_cleaning":
-                    # Use a synthetic in-memory CSV path; the agent will fail gracefully
-                    # if the file doesn't exist and record the failure as a trail.
                     csv_path = str(_REPO / "data" / "sample" / "dirty_data.csv")
-                    result = agent.clean(csv_path)
+                    result = agent.clean(csv_path, difficulty=difficulty)
                     success = bool(result.get("success", False))
                     method = result.get("method", agent.current_strategy.get("method", "unknown"))
 
                 elif domain == "code_generation":
-                    result = agent.generate(task["description"])
-                    success = bool(result.get("code", ""))
+                    result = agent.generate(task["description"], verifier=verifier)
+                    success = bool(result.get("success", False))
                     method = result.get("method", agent.current_strategy.get("method", "unknown"))
 
                 elif domain == "api_testing":
-                    # Use httpbin as a stable public test target.
                     url = "https://httpbin.org/get"
-                    result = agent.test_endpoint(url, method="GET", expected_status=200)
+                    result = agent.test_endpoint(url, method="GET", expected_status=200, difficulty=difficulty)
                     success = result.get("status_code") == 200
                     method = agent.current_strategy.get("method", "basic_get")
 
@@ -213,6 +217,7 @@ def run_condition(
                 "task_id": task["id"],
                 "condition": condition,
                 "domain": domain,
+                "difficulty": round(difficulty, 3),
                 "task_seq": seq,
                 "success": success,
                 "agent_id": agent.id,
@@ -222,6 +227,7 @@ def run_condition(
                 "trails_per_domain": eval_snap.get("trails_per_domain", {}),
                 "specialisation_index": round(spec_idx, 4),
                 "entropy": round(entropy, 4),
+                "inferred_domain": None,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
@@ -236,8 +242,113 @@ def run_condition(
                     eval_snap.get("soil_trails", 0),
                 )
 
+            _jitter_sleep(_rng)
+
     logger.info("Condition=%s done. Records written to %s", condition, out_path)
     return records
+
+
+def run_generic_condition(
+    tasks: list[dict],
+    n: int,
+    seed: int,
+    out_path: Path,
+    metrics_host: str,
+    metrics_port: int,
+) -> list[dict]:
+    """
+    Run the generic-agent condition: cross-domain agents with stigmergy on.
+    Used to measure AC2' (specialisation grows from soil, not hard-wired).
+    """
+    os.environ["EXPLOIT_DISABLED"] = "false"
+    os.environ["OG_SEED"] = str(seed)
+
+    for mod_name in list(sys.modules.keys()):
+        if mod_name.startswith("base.") or mod_name.startswith("specialists."):
+            del sys.modules[mod_name]
+
+    from specialists.generic import GenericAgent
+
+    agent = GenericAgent(agent_id=f"generic-{seed}")
+
+    agent_domain_counts: dict[str, dict[str, int]] = {
+        "generic": defaultdict(int)
+    }
+    method_counts: Counter = Counter()
+    records: list[dict] = []
+
+    import random as _rand
+    rng = _rand.Random(seed + 9999)
+    selected = tasks[:n]
+    rng.shuffle(selected)
+
+    logger.info("Condition=generic seed=%d tasks=%d", seed, len(selected))
+
+    with out_path.open("w") as fh:
+        for seq, task in enumerate(selected):
+            t0 = time.time()
+            try:
+                result = agent.execute(task)
+                success = bool(result.get("success", False))
+                method = result.get("method", "dispatch")
+                inferred = agent._inferred_domain or task.get("domain", "unknown")
+            except Exception as e:
+                logger.warning("Generic task %s failed: %s", task["id"], e)
+                success = False
+                method = "dispatch"
+                inferred = task.get("domain", "unknown")
+
+            elapsed_ms = (time.time() - t0) * 1000
+
+            agent_domain_counts["generic"][inferred] += 1
+            method_counts[(inferred, method)] += 1
+
+            eval_snap = _fetch_eval_metrics(metrics_host, metrics_port)
+            spec_idx = _specialisation_index(agent_domain_counts)
+            entropy = _shannon_entropy(method_counts)
+
+            record = {
+                "task_id": task["id"],
+                "condition": "generic",
+                "domain": task.get("domain", "unknown"),
+                "difficulty": float(task.get("difficulty", 0.0)),
+                "task_seq": seq,
+                "success": success,
+                "agent_id": agent.id,
+                "strategy_method": method,
+                "elapsed_ms": round(elapsed_ms, 2),
+                "soil_trails": eval_snap.get("soil_trails", 0),
+                "trails_per_domain": eval_snap.get("trails_per_domain", {}),
+                "specialisation_index": round(spec_idx, 4),
+                "entropy": round(entropy, 4),
+                "inferred_domain": inferred,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            fh.write(json.dumps(record) + "\n")
+            fh.flush()
+            records.append(record)
+
+            if seq % 50 == 0:
+                logger.info(
+                    "[generic] seq=%d success=%s spec_idx=%.3f inferred=%s",
+                    seq, success, spec_idx, inferred,
+                )
+
+            # Small jitter between tasks
+            _jitter_sleep(rng)
+
+    logger.info("Condition=generic done. Records written to %s", out_path)
+    return records
+
+
+def _jitter_sleep(rng) -> None:
+    """Sleep 20-80ms with Gaussian jitter to add real stochasticity."""
+    try:
+        import numpy as np
+        delay = max(0.02, np.random.normal(0.05, 0.01))
+    except ImportError:
+        delay = max(0.02, rng.gauss(0.05, 0.01))
+    time.sleep(delay)
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
@@ -312,6 +423,18 @@ def main():
                 exploit_disabled=exploit_disabled,
             )
             all_records.extend(records)
+
+        # Generic condition (cross-domain agents, stigmergy on)
+        generic_path = out_dir / f"generic_{seed}.jsonl"
+        generic_records = run_generic_condition(
+            tasks=shuffled,
+            n=args.n,
+            seed=seed,
+            out_path=generic_path,
+            metrics_host=args.metrics_host,
+            metrics_port=args.metrics_port,
+        )
+        all_records.extend(generic_records)
 
     logger.info("All conditions complete. %d total records. Run eval/analyse.py to generate report.", len(all_records))
 

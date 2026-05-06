@@ -64,8 +64,11 @@ def load_agent():
     if agent_type == "api_tester":
         from specialists.api_tester import ApiTesterAgent
         return ApiTesterAgent(agent_id=agent_id)
+    if agent_type == "generic":
+        from specialists.generic import GenericAgent
+        return GenericAgent(agent_id=agent_id)
     raise ValueError(
-        f"Unknown AGENT_TYPE: {agent_type}. Use: data_cleaner, code_generator, api_tester"
+        f"Unknown AGENT_TYPE: {agent_type}. Use: data_cleaner, code_generator, api_tester, generic"
     )
 
 
@@ -128,10 +131,31 @@ def run_api_tester_loop(agent):
     logger.info(f"Result: status={result.get('status_code')} success={result.get('success')}")
 
 
+def run_generic_loop(agent):
+    from pathlib import Path
+    tasks_file = os.getenv("TASKS_FILE", "/tasks/tasks.jsonl")
+    if os.path.exists(tasks_file):
+        tasks = [json.loads(l) for l in Path(tasks_file).read_text().strip().splitlines() if l.strip()]
+        task = random.choice(tasks)
+    else:
+        task = {
+            "description": "validate GET https://httpbin.org/get returns 200",
+            "domain": "api_testing",
+            "difficulty": 0.2,
+            "verifier": None,
+        }
+    result = agent.execute(task)
+    logger.info(
+        f"Generic agent result: success={result.get('success')} "
+        f"domain={agent.task_domain} inferred_from_soil={agent._inferred_domain}"
+    )
+
+
 LOOPS: dict[str, Callable] = {
     "data_cleaner": run_data_cleaner_loop,
     "code_generator": run_code_generator_loop,
     "api_tester": run_api_tester_loop,
+    "generic": run_generic_loop,
 }
 
 

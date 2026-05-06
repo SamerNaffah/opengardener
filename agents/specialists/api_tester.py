@@ -7,10 +7,17 @@ Strategies (emergent via soil trails):
   - post_json: POST with JSON payload
   - health_check: lightweight ping (HEAD or GET /)
   - retry_backoff: retry with exponential backoff on failure
+
+Round-2 eval additions:
+  - test_endpoint() accepts difficulty: float
+  - FAILURE_INJECTION_RATE env var: with probability = difficulty × rate,
+    hit a known-bad URL so the agent sees real failures on hard tasks
 """
 
 import json
 import logging
+import os
+import random
 import time
 from typing import Optional
 
@@ -19,6 +26,11 @@ import httpx
 from base.agent import EmergentAgent, TaskOutcome
 
 logger = logging.getLogger(__name__)
+
+_FAILURE_URLS = [
+    "https://httpbin.org/status/500",
+    "https://httpbin.org/status/503",
+]
 
 
 class ApiTesterAgent(EmergentAgent):
@@ -48,10 +60,19 @@ class ApiTesterAgent(EmergentAgent):
         headers: Optional[dict] = None,
         payload: Optional[dict] = None,
         expected_status: int = 200,
+        difficulty: float = 0.0,
     ) -> dict:
         """
         Test an HTTP endpoint using the strategy from the Soil.
+        difficulty: 0-1; combined with FAILURE_INJECTION_RATE env var to inject failures.
         """
+        # Failure injection: redirect to a bad URL proportional to difficulty
+        rate = float(os.getenv("FAILURE_INJECTION_RATE", "0.0"))
+        if rate > 0 and difficulty > 0 and random.random() < difficulty * rate:
+            url = random.choice(_FAILURE_URLS)
+            expected_status = 200  # will fail against 500/503
+            logger.debug("[%s] Failure injection: redirected to %s", self.id, url)
+
         task_desc = f"test {method} {url} (expected {expected_status})"
         strategy = self.before_task(task_desc)
         start = time.time()
@@ -95,22 +116,16 @@ class ApiTesterAgent(EmergentAgent):
 
         if method_name == "basic_get":
             return self._basic_get(url, headers, timeout, expected_status)
-
         elif method_name == "auth_bearer":
-            import os
             token = strategy.get("token") or os.getenv("API_TEST_TOKEN", "test-token")
             headers["Authorization"] = f"Bearer {token}"
             return self._basic_get(url, headers, timeout, expected_status)
-
         elif method_name == "post_json":
             return self._post_json(url, headers, payload or {}, timeout, expected_status)
-
         elif method_name == "health_check":
             return self._health_check(url, timeout)
-
         elif method_name == "retry_backoff":
             return self._retry_with_backoff(url, headers, timeout, expected_status, strategy)
-
         else:
             return self._basic_get(url, headers, timeout, expected_status)
 
@@ -143,7 +158,6 @@ class ApiTesterAgent(EmergentAgent):
         }
 
     def _health_check(self, url: str, timeout: float) -> dict:
-        # Use HEAD if possible, fall back to GET
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             try:
                 response = client.head(url)

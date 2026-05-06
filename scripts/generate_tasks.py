@@ -3,7 +3,14 @@ Synthetic task corpus generator for OpenGardener evaluation.
 
 Produces a JSONL file where each line is one task:
   {"id": "t0001", "domain": "data_cleaning", "description": "...",
-   "difficulty": 0.3, "expected_method": "pandas_dropna", "seed_idx": 42}
+   "difficulty": 0.3, "expected_method": "pandas_dropna", "seed_idx": 42,
+   "verifier": null, "malformed": false}
+
+Round-2 additions:
+  - verifier: Python snippet (str) for code_generation tasks; null for others.
+    Exec'd alongside generated code in a subprocess to determine success.
+  - malformed: true for data_cleaning tasks with difficulty > 0.5.
+    Signals that INJECT_MALFORMED agents should corrupt the CSV first.
 
 Design choices:
   - Three domains, balanced by default (configurable via --domain-weights).
@@ -143,6 +150,77 @@ def _fill(template: str, rng: random.Random) -> str:
     )
 
 
+# ─── Verifier snippets (code_generation only) ───────────────────────────────
+
+def _get_verifier(description: str, expected_method: str) -> str:
+    """Return a Python verification snippet for code_generation tasks."""
+    d = description.lower()
+
+    if "validates an email" in d or "validate an email" in d:
+        return (
+            "assert validate_email('user@example.com') == True\n"
+            "assert validate_email('bad') == False"
+        )
+    if "parses json" in d or "parse json" in d:
+        return (
+            "import json as _json\n"
+            "assert parse_json('{\"a\":1}') == {\"a\": 1}\n"
+            "assert parse_json('bad') is None"
+        )
+    if "retries" in d or "retry" in d:
+        return (
+            "_count = [0]\n"
+            "def _fail(): _count[0] += 1; raise ValueError('x')\n"
+            "try: retry(_fail)\n"
+            "except: pass\n"
+            "assert _count[0] > 1"
+        )
+    if "lru cache" in d:
+        return (
+            "c = LRUCache(2)\n"
+            "c.put(1, 1); c.put(2, 2)\n"
+            "assert c.get(1) == 1\n"
+            "c.put(3, 3)\n"
+            "assert c.get(2) == -1"
+        )
+    if "flatten" in d and "list" in d:
+        return "assert flatten([[1, [2]], 3]) == [1, 2, 3]"
+    if "memoize" in d or "memoizes" in d:
+        return (
+            "_calls = [0]\n"
+            "@memoize\n"
+            "def _f(x): _calls[0] += 1; return x * 2\n"
+            "_f(3); _f(3)\n"
+            "assert _calls[0] == 1"
+        )
+    if "singleton" in d:
+        return (
+            "a = Singleton()\n"
+            "b = Singleton()\n"
+            "assert a is b"
+        )
+    if "context manager" in d:
+        return (
+            "with resource_manager() as _r:\n"
+            "    assert _r is not None"
+        )
+    if "unit tests" in d:
+        return "assert isinstance(result, str) and 'def test_' in result"
+    if "fibonacci" in d:
+        return "assert fib(10) == 55 or fibonacci(10) == 55 or solution(10) == 55"
+    if "quicksort" in d or "quick sort" in d:
+        return "assert solution([3,1,2]) == [1,2,3]"
+    if "binary search" in d:
+        return "assert solution([1,2,3,4], 3) in (2, True)"
+
+    # Generic fallback: generated code must produce some non-None symbol named
+    # 'result', 'solution', or 'output'
+    return (
+        "_sym = next((v for k,v in vars().items() if k in ('result','solution','output') and v is not None), '__missing__')\n"
+        "assert _sym != '__missing__'"
+    )
+
+
 # ─── Generator ──────────────────────────────────────────────────────────────
 
 DOMAIN_TEMPLATES = {
@@ -176,6 +254,14 @@ def generate_corpus(
         except KeyError:
             description = tmpl  # fallback: use template verbatim
 
+        # Round-2: verifier for code tasks, malformed flag for data tasks
+        verifier: str | None = None
+        malformed: bool = False
+        if domain == "code_generation":
+            verifier = _get_verifier(description, expected_method)
+        elif domain == "data_cleaning":
+            malformed = difficulty > 0.5
+
         tasks.append({
             "id": f"t{i:05d}",
             "domain": domain,
@@ -183,6 +269,8 @@ def generate_corpus(
             "difficulty": round(difficulty, 3),
             "expected_method": expected_method,
             "seed_idx": i,
+            "verifier": verifier,
+            "malformed": malformed,
         })
 
     return tasks
