@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Biologically-inspired multi-agent orchestration - where agents grow, specialize, and are pruned like a garden.</strong>
+  <strong>Biologically-inspired multi-agent orchestration — designed to support emergent specialisation; under evaluation.</strong>
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@ The system is inspired by the metaphor of a garden:
 |--------|-------------|
 | Soil | Shared vector memory (ChromaDB) |
 | Pheromone trails | Embedded task outcomes stored as trails |
-| Plants specializing by environment | Agents self-specializing by domain |
+| Plants specializing by environment | Agents designed to specialise by domain (under evaluation) |
 | Gardener pruning weak plants | Orchestrator retiring underperforming agents |
 | Seeds carrying genetic potential | New agents initialized with genome defaults |
 
@@ -273,18 +273,47 @@ make proto          Regenerate Python gRPC stubs locally
 
 ---
 
-## Evaluation Results (v0.2)
+## Evaluation
 
-Experiment: 2000 tasks × 2 seeds, control (EXPLOIT_DISABLED=true) vs treatment (stigmergy on).
+OpenGardener's claims (emergent specialisation, soil-driven coordination beats
+naive baselines) are tested against four pre-committed acceptance criteria.
+Methodology and full results in `eval/RESULTS.md`; the harness lives in `eval/`
+and `scripts/run_experiment.py`.
 
-| Criterion | Result | Value |
-|-----------|--------|-------|
-| **AC1** — Treatment SR ≥ control SR | ✅ PASS | 1.000 vs 0.997 |
-| **AC2** — Specialisation index ≥ 0.6 by task 500 | ✅ PASS | 1.000 |
-| **AC3** — Shannon entropy H ∈ [0.5, 3.5] bits | ✅ PASS | 1.58 bits |
-| **AC4** — Reproducible across seeds (Δ < 0.05) | ✅ PASS | 0.000 |
+### Round 1 — Lenient harness (deprecated)
 
-Agents with stigmergy enabled reach zero task failures and perfect domain specialisation within 500 tasks; agents without it do not.
+| Criterion                                   | Result   | Why it's hollow                                         |
+|---------------------------------------------|----------|---------------------------------------------------------|
+| AC1 — Treatment SR ≥ control SR            | 1.000 vs 0.997 | Both arms hit ~100%; no headroom to measure a real gap. |
+| AC2 — Specialisation index ≥ 0.6 by task 500 | 1.000   | Each agent class was hard-coded to one domain; specialisation was structural, not learned. |
+| AC3 — Shannon entropy ∈ [0.5, 3.5] bits     | 1.58     | This one was real.                                      |
+| AC4 — Reproducible across seeds (Δ < 0.05) | Δ=0.000  | System was fully deterministic; "reproducibility" with no stochasticity proves nothing. |
+
+Round 1 produced 4 of 4 green checks. Three were artefacts of a too-lenient
+test, not real signals. Kept here as a worked example of what *not* to celebrate.
+
+### Round 2 — Strict harness
+
+Failure injection (data-cleaner success now requires retaining ≥ `1 − 0.5·difficulty`
+of input rows; code-gen runs verifier subprocesses; api-tester redirects to
+known-bad endpoints under load), a `GenericAgent` that picks its own domain by
+soil query, and real stochasticity (random task ordering + Gaussian inter-task
+jitter) across two seeds.
+
+| Criterion                                          | Result | Value                                  |
+|----------------------------------------------------|--------|----------------------------------------|
+| AC1 — Hard-task success-rate gap ≥ 0.20            | FAIL   | Δ = 0.016 (treatment 0.896, control 0.880) |
+| AC2 — Generic-agent specialisation ≥ 0.6 by task 500 | FAIL | 0.496 (≈ uniform random over 3 domains) |
+| AC3 — Method entropy ∈ [0.5, 2.5] bits             | FAIL   | ~0 (one method dominated immediately)   |
+| AC4 — Cross-seed variance > 0.02 AND final Δ < 0.05 | SKIP  | Seed 1 incomplete — debugging          |
+
+Three real failures. Diagnostic in `eval/RESULTS.md` §3. Round 2.1 patches in
+progress (stricter EXPLORE control, ε-greedy floor, GenericAgent dispatcher fix).
+
+### Plots
+
+`eval/plots/01_success_rate.png`, `02_specialisation.png`, `03_entropy.png`,
+`04_trails_per_domain.png`.
 
 ## Research
 
