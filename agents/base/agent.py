@@ -171,8 +171,13 @@ class EmergentAgent:
         successes = [r for r in similar if r.outcome == "success"]
 
         exploit_disabled = os.getenv("EXPLOIT_DISABLED", "false").lower() in ("1", "true", "yes")
+        # ε-greedy exploration floor: even in EXPLOIT mode, explore with prob ε.
+        # Prevents popular trails from dominating forever and ensures strategy diversity (AC3').
+        # Set OG_EPSILON=0 to disable (pure exploit ablation).
+        epsilon = float(os.getenv("OG_EPSILON", "0.1"))
+        force_explore = (not exploit_disabled) and (random.random() < epsilon)
 
-        if successes and not exploit_disabled:
+        if successes and not exploit_disabled and not force_explore:
             # EXPLOIT: pick by composite (similarity × producing-agent reputation),
             # mirroring the Rust-side compose_score so client and server agree.
             best = max(successes, key=self._exploit_score)
@@ -187,20 +192,24 @@ class EmergentAgent:
             )
             return self.current_strategy
 
+        if force_explore:
+            logger.debug(f"[{self.id}] ε-greedy: forced EXPLORE despite {len(successes)} success trail(s)")
+
         # EXPLORE — no usable success trails for this task.
         self.current_confidence = 0.3
         failures = [r for r in similar if r.outcome == "failure"]
         failed_approaches = [str(r.approach) for r in failures[:3]]
 
-        # Try LLM-guided mutation first if available.
-        if self.llm.is_available():
+        # In control condition (EXPLOIT_DISABLED=true), always use rule-based mutation only.
+        # LLM augmentation would confound the control — we need pure rule-based baseline.
+        if not exploit_disabled and self.llm.is_available():
             llm_approach = self.llm.suggest_approach(task_description, failed_approaches)
             if llm_approach:
                 self.current_strategy = self._coerce_strategy(llm_approach)
                 logger.info(f"[{self.id}] EXPLORE (LLM): generated new approach")
                 return self.current_strategy
 
-        # Fall back to rule-based mutation.
+        # Rule-based mutation (always used in control; fallback in treatment).
         self.current_strategy = self.mutate_approach(task_description)
         logger.info(f"[{self.id}] EXPLORE (rule-based): mutated approach")
         return self.current_strategy
@@ -295,8 +304,9 @@ class EmergentAgent:
         sim = max(0.0, r.similarity)
         sr = max(0.0, r.success_rate)
         # +log(1+hits) keeps well-trodden trails attractive without exploding.
+        # Cap at 1.0 so popular trails can't dominate forever.
         import math
-        hit_bonus = math.log1p(max(0, r.hits))
+        hit_bonus = min(math.log1p(max(0, r.hits)), 1.0)
         return sim * (beta + (1.0 - beta) * sr) * (1.0 + 0.1 * hit_bonus)
 
     @staticmethod
@@ -357,12 +367,17 @@ class EmergentAgent:
             )
             ack = stub.ReportHealth(report, timeout=5.0)
             if ack.should_terminate:
-                logger.warning(
-                    f"[{self.id}] PRUNE SIGNAL received: {ack.terminate_reason}. "
-                    "Archiving knowledge and shutting down."
-                )
-                self._archive_and_exit(ack.terminate_reason)
-                return True
+                if os.getenv("EVAL_MODE", "false").lower() in ("1", "true", "yes"):
+                    logger.info(
+                        f"[{self.id}] PRUNE SIGNAL suppressed (EVAL_MODE=true): {ack.terminate_reason}"
+                    )
+                else:
+                    logger.warning(
+                        f"[{self.id}] PRUNE SIGNAL received: {ack.terminate_reason}. "
+                        "Archiving knowledge and shutting down."
+                    )
+                    self._archive_and_exit(ack.terminate_reason)
+                    return True
             if ack.message and ack.message != "OK":
                 logger.info(f"[{self.id}] Gardener feedback: {ack.message}")
         except grpc.RpcError as e:

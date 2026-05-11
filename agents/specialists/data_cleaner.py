@@ -151,8 +151,9 @@ class DataCleanerAgent(EmergentAgent):
             df = df.drop_duplicates()
 
         cleaned_rows = len(df)
-        # Success: must retain at least (1 - difficulty) fraction of original rows
-        threshold = max(0.0, 1.0 - difficulty)
+        # Tightened threshold: must retain at least (1 - 0.5*difficulty) fraction.
+        # At difficulty=0.6: need ≥70% rows (was 40%). Forces method choice to matter.
+        threshold = max(0.0, 1.0 - 0.5 * difficulty)
         success = (cleaned_rows / original_rows) >= threshold if original_rows > 0 else True
 
         import os as _os
@@ -211,7 +212,8 @@ class DataCleanerAgent(EmergentAgent):
             df[col] = df[col].fillna("UNKNOWN")
 
         cleaned_rows = len(df)
-        threshold = max(0.0, 1.0 - difficulty)
+        # Tightened threshold: mirrors _pandas_dropna change (1 - 0.5*difficulty).
+        threshold = max(0.0, 1.0 - 0.5 * difficulty)
         success = (cleaned_rows / original_rows) >= threshold if original_rows > 0 else True
 
         import os as _os

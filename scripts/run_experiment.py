@@ -129,6 +129,7 @@ def run_condition(
 ) -> list[dict]:
     os.environ["EXPLOIT_DISABLED"] = "true" if exploit_disabled else "false"
     os.environ["OG_SEED"] = str(seed)
+    os.environ["EVAL_MODE"] = "true"  # suppress Gardener prune signals during experiments
 
     # Import agents after env vars are set so they pick up OG_SEED / EXPLOIT_DISABLED.
     import importlib
@@ -195,8 +196,21 @@ def run_condition(
                     method = agent.current_strategy.get("method", "basic_get")
 
             except SystemExit:
-                logger.warning("Agent %s exited (pruned). Skipping remaining tasks for this agent.", agent_key)
-                break
+                logger.warning("Agent %s exited (pruned). Replacing with fresh instance.", agent_key)
+                # Respawn a fresh agent for this domain so the run continues.
+                try:
+                    if domain == "data_cleaning":
+                        from specialists.data_cleaner import DataCleanerAgent
+                        agents[agent_key] = DataCleanerAgent(agent_id=f"{condition}-dc-{seed}-r")
+                    elif domain == "code_generation":
+                        from specialists.code_generator import CodeGeneratorAgent
+                        agents[agent_key] = CodeGeneratorAgent(agent_id=f"{condition}-cg-{seed}-r")
+                    elif domain == "api_testing":
+                        from specialists.api_tester import ApiTesterAgent
+                        agents[agent_key] = ApiTesterAgent(agent_id=f"{condition}-at-{seed}-r")
+                except Exception as respawn_err:
+                    logger.error("Respawn failed for %s: %s — skipping domain.", agent_key, respawn_err)
+                success = False
             except Exception as e:
                 logger.warning("Task %s failed with exception: %s", task["id"], e)
                 success = False
@@ -262,6 +276,7 @@ def run_generic_condition(
     """
     os.environ["EXPLOIT_DISABLED"] = "false"
     os.environ["OG_SEED"] = str(seed)
+    os.environ["EVAL_MODE"] = "true"  # suppress Gardener prune signals during experiments
 
     for mod_name in list(sys.modules.keys()):
         if mod_name.startswith("base.") or mod_name.startswith("specialists."):
